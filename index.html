@@ -1,0 +1,224 @@
+<html>
+<head>
+	<script src="https://bundle.run/buffer@6.0.3"></script>
+	<script src="hhs.js"></script>
+	<script>
+		globalThis.Buffer = globalThis.buffer.Buffer
+
+		class DocumentSpace extends HHS.HashedObject {
+			constructor() {
+				super();
+				this.setRandomId();
+				this.addDerivedField('contents', new HHS.MutableReference());
+			}
+
+			getClassName() {
+				return 'test/DocumentSpace';
+			}
+
+			init() {
+
+			}
+
+			async validate(references) {
+				return this.getId() !== undefined && this.checkDerivedField('contents') 
+			}
+
+			setValue(value) {
+				return this.contents.setValue(value).then(() => { this.getStore().save(this.contents) });
+			}
+
+			getValue() {
+				return this.contents.getValue();
+			}
+
+			startSync() {
+				let resources = this.getResources();
+
+				if (resources === undefined) {
+					throw new Error('Cannot start sync: resources not configured.');
+				}
+
+				if (resources.config?.id === undefined) {
+					throw new Error('Cannot start sync: local identity has not been defined.');
+				}
+
+				if (resources.store === undefined) {
+					throw new Error('Cannot start sync: a local store has not been configured.')
+				}
+
+				this._node = new HHS.PeerNode(resources);
+
+				this._node.broadcast(this);
+				this._node.sync(this);
+
+				return this.contents.loadAndWatchForChanges();
+			}
+
+			async stopSync() {
+				this._node?.stopBroadcast(this);
+				this._node?.stopSync(this);
+			}
+
+			setResources(resources) {
+				super.setResources(resources);
+				this.contents.setResources(resources);
+			}
+		}
+
+		HHS.HashedObject.registerClass('test/DocumentSpace', DocumentSpace);
+
+		let store;
+		let key;
+		let id;
+
+		let resources;
+
+		let init = async () => {
+			store = new HHS.Store(new HHS.WorkerSafeIdbBackend('document-space-example'));
+			
+			key = await HHS.RSAKeyPair.generate(1024);
+			id = HHS.Identity.fromKeyPair({name: new HHS.RNGImpl().randomHexString(128)}, key);
+
+			await store.save(key);
+			await store.save(id);
+
+			resources = await HHS.Resources.create({config: {id: id}, store: store});
+		}
+	</script>
+</head>
+<body>
+	<h1 data-simply-field="title">Playground for Hyper Hyper Space</h1>
+
+	<p> If you open the console, you'll find the contents of the 
+		@hyper-hyper-space/core package inside a global HHS object.</p>
+
+	<p> This page defines an example DocumentSpace class, that can sync a single javascript
+		object last-writer-wins style. It also defines an init() function, that will create
+		an Resources object you can use to initialize HHS (it has a random crypto id and an 
+		IndexedDB-based store).
+	</p>
+
+	<p>
+		To create a Document Space, do this (you can use the console on this page to try):
+		
+<pre>	await init();
+	let ds = new DocumentSpace();
+	let space = HHS.Space.fromEntryPoint(ds, resources);
+	await space.entryPoint
+	console.log(await space.getWordCoding())
+	ds.setResources(resources)
+	ds.startSync()
+</pre>
+
+		You only need to run the code above once. The 3-word code for your newly created space will be printed on the console, and the space will be persisted to in-browser storage.
+	</p>
+
+	<p>
+		You can then instantiate this object in another computer / browser / tab (or re-open it in the same browser where you created it) by opening this
+		page again and then typing this in the console:
+
+<pre>	await init();
+	let space = HHS.Space.fromWordCode(['your', 'words', 'here!'], resources) // replace 3 words;
+	let ds = await space.getEntryPoint();
+	ds.setResources(resources);
+	await resources.store.save(ds);
+	ds.startSync();
+</pre>
+
+		Remember to replace the 3-code word in the code above by the one you got when creating your space!
+		You need to keep at least one browser tab open for the space to be available.
+	</p>
+
+	<p>Now you can do, in any of your browser windows:
+<pre>	ds.setValue({'myApp': 'state'});
+</pre>
+	</p>
+
+	<p>
+		And you can read that back in the rest of them:
+<pre>	ds.getValue();
+</pre>  
+	</p>
+
+	<p>If you were <b>really</b> creating an HHS-based webpage, you'll probably want to use something like these <a href="https://github.com/hyperhyperspace/hyperhyperspace-react">react bindings</a> to tie your web components automatically to the objects in your store!</p>
+
+	<script>
+		var hhsStorage = {
+			init : function(endpoint) {
+				this.url = endpoint;
+				this.endpoint = endpoint;
+				if (document.location.hash.match("words/")) {
+					this.words = document.location.hash.replace("words/", "").split("-");
+				} else {
+					this.words = document.querySelector("script[data-simply-words]").getAttribute("data-simply-words").split("-");
+				}
+				
+				let words = this.words;
+				this.init = init()
+				.then(function() {
+					let space = HHS.Space.fromWordCode(words, resources) // replace 3 words;
+					return space.getEntryPoint();
+					
+				})
+				.then(function(ds) {
+					editor.storage.ds = ds;
+					ds.setResources(resources);
+					return resources.store.save(ds)
+					.then(function() {
+						return ds;
+					});
+				})
+				.then(function(ds) {
+					return ds.startSync();
+				});
+			},
+			save : function(data, callback) {
+				this.ds.setValue(data)
+				.then(function() {
+					callback();
+				});
+			},
+			load : function(callback) {
+				this.init
+				.then(function() {
+					let data = editor.storage.ds.getValue();
+					console.log(data);
+					callback(data);
+				});
+			},
+			connect : function(callback) {
+				callback();
+			}
+		};
+	</script>
+	<script src="https://yvo.muze.nl/simply-edit/js/simply-edit.js"
+		data-api-key="muze"
+		data-simply-storage="hhsStorage"
+		data-simply-words="canine-have-process"
+        ></script>
+</body>
+
+</html>
+
+<!-- creation
+
+await init();
+let ds = new DocumentSpace();
+let space = HHS.Space.fromEntryPoint(ds, resources);
+await space.entryPoint
+console.log(await space.getWordCoding())
+ds.setResources(resources)
+ds.startSync()
+
+-->
+
+<!-- lookup 
+await init();
+let space = HHS.Space.fromWordCode(['decade', 'punish', 'capable'], resources) // replace 3 words;
+let ds = await space.getEntryPoint();
+ds.setResources(resources);
+await resources.store.save(ds);
+ds.startSync();
+
+-->
